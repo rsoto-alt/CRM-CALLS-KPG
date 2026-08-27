@@ -180,26 +180,23 @@ function restablecerContrasena(){
 
 /* ==========================================================================
    1-bis. CORREOS AUTOMÁTICOS
-   · 8:00 am (L-V): a cada ejecutivo, sus llamadas pendientes del día.
-   · 6:00 pm (L-V): a Gerencia, el cumplimiento de meta del día.
+   · 5:00 pm (L-V): a cada ejecutivo, su cierre del día y lo que trae agendado
+     para el siguiente día de trabajo. El viernes, además, el corte de la semana.
+   · 3:00 pm (viernes): a Gerencia y Dirección, el cierre semanal con el PDF.
    Los correos salen desde la cuenta dueña de este archivo.
    Se activan una sola vez desde el menú KAPITAL CRM > Activar correos automáticos.
    ========================================================================== */
-var HORA_EJECUTIVOS = 8;    // 8 am, lunes a viernes
 var HORA_CIERRE_DIA = 17;   // 5 pm, lunes a viernes
 var HORA_CIERRE     = 15;   // 3 pm del viernes
 
 function instalarCorreos(){
   quitarCorreos(true);
-  ScriptApp.newTrigger('correoPendientesEjecutivos').timeBased()
-    .everyDays(1).atHour(HORA_EJECUTIVOS).nearMinute(0).create();
   ScriptApp.newTrigger('correoCierreDiaEjecutivos').timeBased()
     .everyDays(1).atHour(HORA_CIERRE_DIA).nearMinute(0).create();
   ScriptApp.newTrigger('correoCierreSemanal').timeBased()
     .onWeekDay(ScriptApp.WeekDay.FRIDAY).atHour(HORA_CIERRE).nearMinute(0).create();
   SpreadsheetApp.getUi().alert(
     'Correos automáticos activados\n\n' +
-    '· Lunes a viernes ' + HORA_EJECUTIVOS + ':00 hrs — cada ejecutivo recibe sus llamadas pendientes del día.\n' +
     '· Lunes a viernes ' + HORA_CIERRE_DIA + ':00 hrs — cada ejecutivo recibe su cierre del día y las llamadas ' +
       'que trae agendadas para el día siguiente (el viernes, las del lunes).\n' +
     '· Viernes ' + HORA_CIERRE + ':00 hrs — Gerencia recibe el cierre de la semana.\n\n' +
@@ -217,10 +214,9 @@ function quitarCorreos(silencioso){
   if(!silencioso) SpreadsheetApp.getUi().alert('Correos automáticos desactivados.');
 }
 function enviarCorreosAhora(){
-  var r1 = correoPendientesEjecutivos(true);
   var r2 = correoCierreDiaEjecutivos(true);
   var r3 = correoCierreSemanal(true);
-  SpreadsheetApp.getUi().alert('Prueba de correos\n\n' + r1 + '\n' + r2 + '\n' + r3);
+  SpreadsheetApp.getUi().alert('Prueba de correos\n\n' + r2 + '\n' + r3);
 }
 /* Genera el PDF de la semana en curso y lo deja en Drive, por si se necesita
    fuera del correo del viernes. */
@@ -442,106 +438,6 @@ function cajaMeta(hechas, meta, texto){
     '<span style="font-size:12.5px;color:#4E6675;">' + texto + '</span>' +
     '</td></tr></table>';
 }
-
-/* --- 8:00 am · pendientes del día para cada ejecutivo --- */
-function correoPendientesEjecutivos(forzar){
-  if(!forzar && !esDiaHabil()) return 'Fin de semana: no se envió nada.';
-  var hoy = hoyISO();
-  var metas = metasGuardadas();
-  var contactos = leer('CONTACTOS');
-  var actividades = leer('ACTIVIDADES');
-  var enviados = 0, sinCorreo = [];
-
-  leer('EJECUTIVOS').forEach(function(e){
-    if(String(e.activo).toUpperCase() !== 'SI') return;
-    if(e.rol !== 'EJECUTIVO') return;
-    if(!e.email){ sinCorreo.push(e.nombre); return; }
-
-    var mios = contactos.filter(function(c){ return c.ejecutivo === e.nombre; });
-    var pend = mios.filter(function(c){
-      return c.fecha_compromiso && c.fecha_compromiso <= hoy &&
-             c.proxima_accion && c.proxima_accion !== 'Sin acción pendiente' &&
-             ESTATUS_ABIERTO.indexOf(c.estatus) < 0;
-    }).sort(function(a,b){
-      var k = String(a.fecha_compromiso).localeCompare(String(b.fecha_compromiso));
-      return k ? k : String(a.hora_compromiso||'99:99').localeCompare(String(b.hora_compromiso||'99:99'));
-    });
-
-    var hechasHoy = actividades.filter(function(a){
-      return a.ejecutivo === e.nombre && a.fecha === hoy && esLlamadaTipo(a.tipo);
-    }).length;
-
-    var cuerpo = cajaMeta(hechasHoy, metas.diaria,
-      hechasHoy >= metas.diaria ? 'Meta del día cumplida.' :
-      'Te faltan ' + Math.max(0, metas.diaria - hechasHoy) + ' llamadas para cerrar el día.');
-
-    if(pend.length){
-      cuerpo += '<div style="font-size:12px;font-weight:bold;letter-spacing:1.5px;color:#108896;margin-bottom:10px;">' +
-        'TIENES ' + pend.length + ' LLAMADA(S) AGENDADA(S)</div>';
-      pend.forEach(function(c){
-        var personas = [];
-        try{ personas = c.personas_json ? JSON.parse(c.personas_json) : []; }catch(err){}
-        var p = personas[0] || {};
-        var vencida = c.fecha_compromiso < hoy;
-        cuerpo += '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" ' +
-          'style="border:1px solid #E4DFDF;border-left:4px solid ' + (vencida ? '#E84D2E' : '#00DA9B') +
-          ';border-radius:9px;margin-bottom:9px;"><tr><td style="padding:13px 16px;">' +
-          '<div style="font-size:14px;font-weight:bold;color:#0D2433;">' + c.proxima_accion + ' · ' +
-            '<span style="color:#108896;">' + c.empresa + '</span>' +
-            (vencida ? ' <span style="background:#FDE3DC;color:#A8331A;font-size:10px;font-weight:bold;padding:2px 7px;border-radius:10px;">VENCIDA</span>' : '') +
-          '</div>' +
-          '<div style="font-size:12px;color:#8098A8;margin-top:3px;">' +
-            (p.nombre ? p.nombre + (p.puesto ? ' · ' + p.puesto : '') + ' &nbsp;·&nbsp; ' : '') +
-            (p.telefono || c.telefono || 'sin teléfono') +
-            ' &nbsp;·&nbsp; agendada para ' + fmtLargo(c.fecha_compromiso) +
-            (c.hora_compromiso ? ' a las <b style="color:#0D2433;">' + c.hora_compromiso + ' hrs</b>' : '') +
-          '</div>' +
-          (c.nota_proxima ? '<div style="font-size:12.5px;color:#4E6675;margin-top:7px;background:#FBFAFA;padding:8px 11px;border-radius:6px;">' +
-            '<b style="color:#0D2433;">Quedamos en:</b> ' + c.nota_proxima + '</div>' : '') +
-          '</td></tr></table>';
-      });
-    } else {
-      var frias = mios.filter(function(c){
-        return c.estatus === 'Sin contactar';
-      }).slice(0, 6);
-      cuerpo += '<div style="font-size:13px;color:#4E6675;line-height:1.7;margin-bottom:14px;">' +
-        'Hoy no traes llamadas agendadas.' +
-        (frias.length ? ' Estas empresas de tu cartera todavía no han recibido su primera llamada:' : '') +
-        '</div>';
-      if(frias.length){
-        cuerpo += '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E4DFDF;border-radius:9px;">';
-        frias.forEach(function(c, i){
-          var personas = [];
-          try{ personas = c.personas_json ? JSON.parse(c.personas_json) : []; }catch(err){}
-          var p = personas[0] || {};
-          cuerpo += '<tr><td style="padding:10px 15px;' + (i ? 'border-top:1px solid #E4DFDF;' : '') + '">' +
-            '<b style="color:#0D2433;font-size:13px;">' + c.empresa + '</b>' +
-            '<span style="color:#8098A8;font-size:12px;"> · ' + (p.nombre || 'sin contacto') +
-            ' · ' + (p.telefono || c.telefono || 'sin teléfono') + '</span></td></tr>';
-        });
-        cuerpo += '</table>';
-      }
-    }
-
-    cuerpo += '<div style="margin-top:20px;"><a href="' + urlApp() + '" ' +
-      'style="display:inline-block;background:#00DA9B;color:#0D2433;text-decoration:none;' +
-      'padding:12px 24px;border-radius:8px;font-size:13px;font-weight:bold;">Abrir el Kapital CRM</a></div>';
-
-    try{
-      GmailApp.sendEmail(e.email,
-        'Tus llamadas de hoy · ' + pend.length + ' pendiente(s)',
-        'Abre el Kapital CRM para ver tus llamadas del día.',
-        { htmlBody: marcoCorreo('LLAMADAS DEL DÍA',
-            'Buenos días, ' + String(e.nombre).split(' ')[0] + '.', cuerpo),
-          inlineImages: { kplogo: logoBlob() }, name: 'Kapital Partners' });
-      enviados++;
-    }catch(err){}
-  });
-
-  return 'Ejecutivos: ' + enviados + ' correo(s) enviado(s).' +
-    (sinCorreo.length ? ' Sin correo capturado: ' + sinCorreo.join(', ') + '.' : '');
-}
-
 
 /* --- 5:00 pm · cierre del día para cada ejecutivo -------------------------
    Le dice cómo cerró: cuántas llamadas puso contra su meta, cómo se repartieron
